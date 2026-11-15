@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 
 internal fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
@@ -192,6 +193,9 @@ object AuthManager {
                 ?: return Result.failure(IllegalStateException("Sign in with Google first before linking phone number."))
             try {
                 user.updatePhoneNumber(credential).await()
+                withTimeoutOrNull(4_000L) {
+                    user.getIdToken(true).await()
+                }
             } catch (e: FirebaseAuthException) {
                 if (e.errorCode == "ERROR_CREDENTIAL_ALREADY_IN_USE") {
                     return Result.failure(

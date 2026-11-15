@@ -22,6 +22,10 @@ import com.example.data.repository.StatusRepository
 import com.example.data.repository.StorageRepository
 import com.example.data.repository.UserRepository
 import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -31,6 +35,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 class WhatacallMainViewModel(
     private val currentUserId: String,
@@ -98,10 +104,12 @@ class WhatacallMainViewModel(
 
     init {
         viewModelScope.launch {
-            _isAdmin.value = adminRepository.isCurrentUserAdmin()
+            _isAdmin.value = withTimeoutOrNull(6_000L) { adminRepository.isCurrentUserAdmin() } ?: false
             try {
-                val token = FirebaseMessaging.getInstance().token.await()
-                if (token.isNotBlank()) {
+                val token = withTimeoutOrNull(6_000L) {
+                    FirebaseMessaging.getInstance().token.await()
+                }
+                if (!token.isNullOrBlank()) {
                     userRepository.updateFcmToken(token)
                 }
             } catch (e: Exception) {
@@ -145,27 +153,45 @@ class WhatacallMainViewModel(
         onComplete: (Boolean, String?) -> Unit
     ) {
         viewModelScope.launch {
-            var photoUrl = ""
-            if (photoUri != null) {
-                val ext = storageRepository.inferExtension(context, photoUri, "jpg")
-                val upload = storageRepository.uploadMedia(currentUserId, "avatars", photoUri, ext)
-                if (upload.isSuccess) {
-                    photoUrl = upload.getOrThrow()
-                } else {
-                    _actionMessage.value = upload.exceptionOrNull()?.message
+            var success = false
+            var errorMessage: String? = null
+            try {
+                val res = withContext(Dispatchers.IO) {
+                    var photoUrl = ""
+                    if (photoUri != null) {
+                        val ext = storageRepository.inferExtension(context, photoUri, "jpg")
+                        val upload = storageRepository.uploadMedia(currentUserId, "avatars", photoUri, ext)
+                        if (upload.isSuccess) {
+                            photoUrl = upload.getOrThrow()
+                        } else {
+                            _actionMessage.value = upload.exceptionOrNull()?.message
+                        }
+                    }
+                    val keyPair = E2eeCryptoManager.getOrCreateIdentityKeyPair(context, currentUserId)
+                    userRepository.registerOrUpdatePhoneAndProfile(
+                        displayName = displayName,
+                        about = about,
+                        username = username,
+                        photoUrl = photoUrl,
+                        verifiedE164Phone = verifiedPhone,
+                        publicKeyBase64 = keyPair.publicKeyBase64,
+                        email = email
+                    )
+                }
+                success = res.isSuccess
+                errorMessage = res.exceptionOrNull()?.localizedMessage ?: res.exceptionOrNull()?.message
+            } catch (e: TimeoutCancellationException) {
+                errorMessage = "Request timed out. Please check your internet connection and try again."
+            } catch (e: CancellationException) {
+                errorMessage = "Profile setup was interrupted. Please tap Start again."
+                throw e
+            } catch (e: Throwable) {
+                errorMessage = e.localizedMessage ?: e.message ?: "Could not save profile."
+            } finally {
+                withContext(NonCancellable) {
+                    onComplete(success, errorMessage)
                 }
             }
-            val keyPair = E2eeCryptoManager.getOrCreateIdentityKeyPair(context, currentUserId)
-            val res = userRepository.registerOrUpdatePhoneAndProfile(
-                displayName = displayName,
-                about = about,
-                username = username,
-                photoUrl = photoUrl,
-                verifiedE164Phone = verifiedPhone,
-                publicKeyBase64 = keyPair.publicKeyBase64,
-                email = email
-            )
-            onComplete(res.isSuccess, res.exceptionOrNull()?.localizedMessage)
         }
     }
 

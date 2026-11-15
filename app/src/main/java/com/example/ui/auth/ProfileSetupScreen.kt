@@ -164,11 +164,18 @@ fun ProfileSetupScreen(
             EncryptionNoticeChip("Generates ECDH P-256 E2EE identity key on device")
 
             if (errorText != null) {
-                Text(
-                    text = errorText!!,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
-                )
+                Surface(
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = errorText!!,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
             }
 
             Spacer(Modifier.height(6.dp))
@@ -208,6 +215,14 @@ fun ProfileSetupScreen(
                 } else {
                     Text("Start Messaging on Whatacall")
                 }
+            }
+
+            if (isSaving) {
+                Text(
+                    text = "Creating your Whatacall profile & E2EE key...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

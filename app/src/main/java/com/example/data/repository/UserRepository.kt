@@ -17,12 +17,17 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 
 class UserRepository(
@@ -102,8 +107,11 @@ class UserRepository(
         val hash = E2eeCryptoManager.sha256Hex(e164Phone)
         val docRef = db.collection("phoneDirectory").document(hash)
         return try {
-            val snap = docRef.get().await()
+            val snap = withTimeout(6_000L) { docRef.get().await() }
             snap.exists() && snap.getString("uid") != uid
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.GET, docRef.path)
+            false
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -177,7 +185,6 @@ class UserRepository(
         publicKeyBase64: String,
         email: String
     ): Result<Unit> {
-        val uid = requireUserId()
         val cleanName = displayName.trim().ifBlank { "Whatacall User" }.take(60)
         val cleanAbout = about.trim().take(160)
         val cleanUsername = username.trim().removePrefix("@").lowercase(Locale.US)
@@ -185,79 +192,107 @@ class UserRepository(
         val phoneHash = E2eeCryptoManager.sha256Hex(verifiedE164Phone)
         val phoneMasked = E2eeCryptoManager.maskPhone(verifiedE164Phone)
 
-        val userRef = db.collection("users").document(uid)
-        val privateRef = userRef.collection("private").document("info")
-        val phoneDirRef = db.collection("phoneDirectory").document(phoneHash)
-
         return try {
-            val existingPhone = phoneDirRef.get().await()
+            val uid = requireUserId()
+            val userRef = db.collection("users").document(uid)
+            val privateRef = userRef.collection("private").document("info")
+            val phoneDirRef = db.collection("phoneDirectory").document(phoneHash)
+            val usernameRef = if (cleanUsername.length >= 3) {
+                db.collection("usernames").document(cleanUsername)
+            } else {
+                null
+            }
+
+            withTimeoutOrNull(4_000L) {
+                auth.currentUser?.getIdToken(false)?.await()
+            }
+
+            val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(12_000L) {
+                coroutineScope {
+                    val phoneDeferred = async { phoneDirRef.get().await() }
+                    val usernameDeferred = async { usernameRef?.get()?.await() }
+                    val profileDeferred = async { userRef.get().await() }
+                    val privateDeferred = async { privateRef.get().await() }
+                    Quadruple(
+                        phoneDeferred.await(),
+                        usernameDeferred.await(),
+                        profileDeferred.await(),
+                        privateDeferred.await()
+                    )
+                }
+            }
+
             if (existingPhone.exists() && existingPhone.getString("uid") != uid) {
                 return Result.failure(
                     IllegalStateException("This phone number is already registered with another Whatacall account.")
                 )
             }
 
-            if (cleanUsername.length >= 3) {
-                val usernameRef = db.collection("usernames").document(cleanUsername)
-                val existingUsername = usernameRef.get().await()
-                if (existingUsername.exists() && existingUsername.getString("uid") != uid) {
-                    return Result.failure(
-                        IllegalStateException("Username @$cleanUsername is already taken.")
+            if (existingUsername != null && existingUsername.exists() && existingUsername.getString("uid") != uid) {
+                return Result.failure(
+                    IllegalStateException("Username @$cleanUsername is already taken.")
+                )
+            }
+
+            val batch = db.batch()
+
+            if (usernameRef != null && existingUsername != null && !existingUsername.exists()) {
+                batch.set(
+                    usernameRef,
+                    mapOf(
+                        "uid" to uid,
+                        "username" to cleanUsername,
+                        "createdAt" to FieldValue.serverTimestamp()
                     )
-                }
-                if (!existingUsername.exists()) {
-                    usernameRef.set(
-                        mapOf(
-                            "uid" to uid,
-                            "username" to cleanUsername,
-                            "createdAt" to FieldValue.serverTimestamp()
-                        )
-                    ).await()
-                }
+                )
             }
 
-            val existingProfileSnap = userRef.get().await()
             if (!existingProfileSnap.exists()) {
-                val profileData = mapOf(
-                    "uid" to uid,
-                    "displayName" to cleanName,
-                    "username" to cleanUsername,
-                    "about" to cleanAbout,
-                    "photoUrl" to photoUrl,
-                    "phoneHash" to phoneHash,
-                    "phoneMasked" to phoneMasked,
-                    "publicKeyBase64" to publicKeyBase64,
-                    "isPhoneVerified" to true,
-                    "isOnline" to true,
-                    "lastSeenPrivacy" to "everyone",
-                    "photoPrivacy" to "everyone",
-                    "statusPrivacy" to "everyone",
-                    "isSuspended" to false,
-                    "lastSeenAt" to FieldValue.serverTimestamp(),
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
+                batch.set(
+                    userRef,
+                    mapOf(
+                        "uid" to uid,
+                        "displayName" to cleanName,
+                        "username" to cleanUsername,
+                        "about" to cleanAbout,
+                        "photoUrl" to photoUrl,
+                        "phoneHash" to phoneHash,
+                        "phoneMasked" to phoneMasked,
+                        "publicKeyBase64" to publicKeyBase64,
+                        "isPhoneVerified" to true,
+                        "isOnline" to true,
+                        "lastSeenPrivacy" to "everyone",
+                        "photoPrivacy" to "everyone",
+                        "statusPrivacy" to "everyone",
+                        "isSuspended" to false,
+                        "lastSeenAt" to FieldValue.serverTimestamp(),
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
                 )
-                userRef.set(profileData).await()
             } else {
-                val updateData = mapOf(
-                    "displayName" to cleanName,
-                    "username" to cleanUsername,
-                    "about" to cleanAbout,
-                    "photoUrl" to photoUrl,
-                    "phoneHash" to phoneHash,
-                    "phoneMasked" to phoneMasked,
-                    "publicKeyBase64" to publicKeyBase64,
-                    "isPhoneVerified" to true,
-                    "isOnline" to true,
-                    "lastSeenAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
+                batch.set(
+                    userRef,
+                    mapOf(
+                        "displayName" to cleanName,
+                        "username" to cleanUsername,
+                        "about" to cleanAbout,
+                        "photoUrl" to photoUrl,
+                        "phoneHash" to phoneHash,
+                        "phoneMasked" to phoneMasked,
+                        "publicKeyBase64" to publicKeyBase64,
+                        "isPhoneVerified" to true,
+                        "isOnline" to true,
+                        "lastSeenAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
                 )
-                userRef.set(updateData, SetOptions.merge()).await()
             }
 
-            val existingPrivate = privateRef.get().await()
             if (!existingPrivate.exists()) {
-                privateRef.set(
+                batch.set(
+                    privateRef,
                     mapOf(
                         "uid" to uid,
                         "phoneNumber" to verifiedE164Phone,
@@ -271,20 +306,22 @@ class UserRepository(
                         "createdAt" to FieldValue.serverTimestamp(),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                )
             } else {
-                privateRef.set(
+                batch.set(
+                    privateRef,
                     mapOf(
                         "phoneNumber" to verifiedE164Phone,
                         "email" to email,
                         "updatedAt" to FieldValue.serverTimestamp()
                     ),
                     SetOptions.merge()
-                ).await()
+                )
             }
 
             if (!existingPhone.exists()) {
-                phoneDirRef.set(
+                batch.set(
+                    phoneDirRef,
                     mapOf(
                         "uid" to uid,
                         "phoneHash" to phoneHash,
@@ -292,25 +329,53 @@ class UserRepository(
                         "photoUrl" to photoUrl,
                         "createdAt" to FieldValue.serverTimestamp()
                     )
-                ).await()
+                )
             } else {
-                phoneDirRef.set(
+                batch.set(
+                    phoneDirRef,
                     mapOf(
                         "displayName" to cleanName,
                         "photoUrl" to photoUrl
                     ),
                     SetOptions.merge()
-                ).await()
+                )
+            }
+
+            withTimeout(15_000L) {
+                batch.commit().await()
             }
 
             Result.success(Unit)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.WRITE, "users")
+            Result.failure(
+                IllegalStateException(
+                    "Connection timed out while saving your Whatacall profile. Check your internet connection and tap Start again.",
+                    e
+                )
+            )
         } catch (e: CancellationException) {
             throw e
+        } catch (e: FirebaseFirestoreException) {
+            handleFirestoreError(e, OperationType.WRITE, "users")
+            Result.failure(
+                IllegalStateException(
+                    "Database error (${e.code.name}): ${e.localizedMessage ?: "Unable to save profile."}",
+                    e
+                )
+            )
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, userRef.path)
+            handleFirestoreError(e, OperationType.WRITE, "users")
             Result.failure(e)
         }
     }
+
+    private data class Quadruple<A, B, C, D>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D
+    )
 
     suspend fun updateProfileFields(
         displayName: String,
@@ -368,16 +433,18 @@ class UserRepository(
         val uid = auth.currentUser?.uid ?: return
         val userRef = db.collection("users").document(uid)
         try {
-            val snap = userRef.get().await()
-            if (snap.exists()) {
-                userRef.set(
-                    mapOf(
-                        "isOnline" to isOnline,
-                        "lastSeenAt" to FieldValue.serverTimestamp(),
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    ),
-                    SetOptions.merge()
-                ).await()
+            withTimeoutOrNull(8_000L) {
+                val snap = userRef.get().await()
+                if (snap.exists()) {
+                    userRef.set(
+                        mapOf(
+                            "isOnline" to isOnline,
+                            "lastSeenAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    ).await()
+                }
             }
         } catch (e: CancellationException) {
             throw e
@@ -390,15 +457,17 @@ class UserRepository(
         val uid = auth.currentUser?.uid ?: return
         val privateRef = db.collection("users").document(uid).collection("private").document("info")
         try {
-            val snap = privateRef.get().await()
-            if (snap.exists()) {
-                privateRef.set(
-                    mapOf(
-                        "fcmToken" to token.take(512),
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    ),
-                    SetOptions.merge()
-                ).await()
+            withTimeoutOrNull(8_000L) {
+                val snap = privateRef.get().await()
+                if (snap.exists()) {
+                    privateRef.set(
+                        mapOf(
+                            "fcmToken" to token.take(512),
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    ).await()
+                }
             }
         } catch (e: CancellationException) {
             throw e

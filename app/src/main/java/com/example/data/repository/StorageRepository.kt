@@ -5,12 +5,19 @@ import android.net.Uri
 import android.util.Log
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
 class StorageRepository(
     private val storage: FirebaseStorage = FirebaseStorage.getInstance()
 ) {
+    init {
+        storage.maxUploadRetryTimeMillis = 10_000L
+        storage.maxOperationRetryTimeMillis = 10_000L
+    }
+
     suspend fun uploadMedia(
         uid: String,
         folder: String,
@@ -21,9 +28,19 @@ class StorageRepository(
             val cleanExt = extension.ifBlank { "bin" }.take(10)
             val fileName = "${UUID.randomUUID()}.$cleanExt"
             val ref = storage.reference.child("users/$uid/$folder/$fileName")
-            ref.putFile(uri).await()
-            val url = ref.downloadUrl.await().toString()
+            val url = withTimeout(15_000L) {
+                ref.putFile(uri).await()
+                ref.downloadUrl.await().toString()
+            }
             Result.success(url)
+        } catch (e: TimeoutCancellationException) {
+            Log.e("StorageRepository", "Media upload timed out for $folder", e)
+            Result.failure(
+                IllegalStateException(
+                    "Media upload timed out. Firebase Storage requires the Blaze plan in Firebase Console.",
+                    e
+                )
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
