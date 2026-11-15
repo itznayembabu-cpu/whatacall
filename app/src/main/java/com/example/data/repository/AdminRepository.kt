@@ -16,12 +16,14 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
 class AdminRepository(
@@ -102,20 +104,25 @@ class AdminRepository(
         val reportId = "rep_${UUID.randomUUID().toString().replace("-", "").take(16)}"
         val docRef = db.collection("reports").document(reportId)
         return try {
-            docRef.set(
-                mapOf(
-                    "reporterId" to uid,
-                    "reportedUserId" to reportedUserId,
-                    "reportedUserName" to reportedUserName.take(60),
-                    "reason" to reason.trim().ifBlank { "Abuse" }.take(120),
-                    "details" to details.trim().take(1000),
-                    "status" to "pending",
-                    "resolutionNote" to "",
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            withTimeout(10_000L) {
+                docRef.set(
+                    mapOf(
+                        "reporterId" to uid,
+                        "reportedUserId" to reportedUserId,
+                        "reportedUserName" to reportedUserName.take(60),
+                        "reason" to reason.trim().ifBlank { "Abuse" }.take(120),
+                        "details" to details.trim().take(1000),
+                        "status" to "pending",
+                        "resolutionNote" to "",
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
             Result.success(reportId)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            Result.failure(IllegalStateException("Timed out submitting report.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

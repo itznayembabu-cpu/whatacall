@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 
 class WhatacallMainViewModel(
@@ -102,6 +103,12 @@ class WhatacallMainViewModel(
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
+    private val _deviceKeyReady = MutableStateFlow(false)
+    val deviceKeyReady: StateFlow<Boolean> = _deviceKeyReady.asStateFlow()
+
+    private val _profileSetupStep = MutableStateFlow<String?>(null)
+    val profileSetupStep: StateFlow<String?> = _profileSetupStep.asStateFlow()
+
     init {
         viewModelScope.launch {
             _isAdmin.value = withTimeoutOrNull(6_000L) { adminRepository.isCurrentUserAdmin() } ?: false
@@ -142,6 +149,24 @@ class WhatacallMainViewModel(
         }
     }
 
+    fun prewarmE2eeKey(context: Context) {
+        if (_deviceKeyReady.value) return
+        val appContext = context.applicationContext
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    withTimeout(3_000L) {
+                        E2eeCryptoManager.getOrCreateIdentityKeyPair(appContext, currentUserId)
+                    }
+                }
+            }.onSuccess {
+                _deviceKeyReady.value = true
+            }.onFailure { e ->
+                Log.e("WhatacallMainVM", "Failed to prewarm E2EE identity key", e)
+            }
+        }
+    }
+
     fun completeProfileSetup(
         context: Context,
         displayName: String,
@@ -152,12 +177,20 @@ class WhatacallMainViewModel(
         email: String,
         onComplete: (Boolean, String?) -> Unit
     ) {
+        val appContext = context.applicationContext
         viewModelScope.launch {
             var success = false
             var errorMessage: String? = null
             try {
+                _profileSetupStep.value = "1/3 Generating ECDH P-256 E2EE key on device..."
+                val keyPair = withContext(Dispatchers.IO) {
+                    withTimeout(3_000L) {
+                        E2eeCryptoManager.getOrCreateIdentityKeyPair(appContext, currentUserId)
+                    }
+                }
+                _deviceKeyReady.value = true
+
                 val res = withContext(Dispatchers.IO) {
-                    val keyPair = E2eeCryptoManager.getOrCreateIdentityKeyPair(context, currentUserId)
                     userRepository.registerOrUpdatePhoneAndProfile(
                         displayName = displayName,
                         about = about,
@@ -165,14 +198,14 @@ class WhatacallMainViewModel(
                         photoUrl = "",
                         verifiedE164Phone = verifiedPhone,
                         publicKeyBase64 = keyPair.publicKeyBase64,
-                        email = email
+                        email = email,
+                        onStage = { step -> _profileSetupStep.value = step }
                     )
                 }
                 success = res.isSuccess
                 errorMessage = res.exceptionOrNull()?.localizedMessage ?: res.exceptionOrNull()?.message
 
                 if (success && photoUri != null) {
-                    val appContext = context.applicationContext
                     viewModelScope.launch(Dispatchers.IO) {
                         val ext = storageRepository.inferExtension(appContext, photoUri, "jpg")
                         val upload = storageRepository.uploadMedia(
@@ -201,6 +234,7 @@ class WhatacallMainViewModel(
             } catch (e: Throwable) {
                 errorMessage = e.localizedMessage ?: e.message ?: "Could not save profile."
             } finally {
+                _profileSetupStep.value = null
                 withContext(NonCancellable) {
                     onComplete(success, errorMessage)
                 }

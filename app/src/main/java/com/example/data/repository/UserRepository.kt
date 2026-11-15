@@ -126,9 +126,12 @@ class UserRepository(
         if (clean.length < 3) return null
         val usernameRef = db.collection("usernames").document(clean)
         return try {
-            val snap = usernameRef.get().await()
+            val snap = withTimeout(8_000L) { usernameRef.get().await() }
             val targetUid = snap.getString("uid") ?: return null
             getUserProfile(targetUid)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.GET, usernameRef.path)
+            null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -141,9 +144,12 @@ class UserRepository(
         val hash = E2eeCryptoManager.sha256Hex(e164Phone)
         val dirRef = db.collection("phoneDirectory").document(hash)
         return try {
-            val snap = dirRef.get().await()
+            val snap = withTimeout(8_000L) { dirRef.get().await() }
             val targetUid = snap.getString("uid") ?: return null
             getUserProfile(targetUid)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.GET, dirRef.path)
+            null
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -184,7 +190,8 @@ class UserRepository(
         photoUrl: String,
         verifiedE164Phone: String,
         publicKeyBase64: String,
-        email: String
+        email: String,
+        onStage: (String) -> Unit = {}
     ): Result<Unit> {
         val cleanName = displayName.trim().ifBlank { "Whatacall User" }.take(60)
         val cleanAbout = about.trim().take(160)
@@ -204,6 +211,7 @@ class UserRepository(
                 null
             }
 
+            onStage("2/3 Checking phone & @username availability...")
             val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(8_000L) {
                 coroutineScope {
                     val phoneDeferred = async { phoneDirRef.get(Source.SERVER).await() }
@@ -338,6 +346,7 @@ class UserRepository(
                 )
             }
 
+            onStage("3/3 Saving profile to Whatacall database...")
             withTimeout(10_000L) {
                 batch.commit().await()
             }
@@ -390,8 +399,11 @@ class UserRepository(
             updates["photoUrl"] = photoUrl.take(1024)
         }
         return try {
-            userRef.set(updates, SetOptions.merge()).await()
+            withTimeout(8_000L) { userRef.set(updates, SetOptions.merge()).await() }
             Result.success(Unit)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.UPDATE, userRef.path)
+            Result.failure(IllegalStateException("Request timed out while updating profile.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -408,16 +420,21 @@ class UserRepository(
         val uid = requireUserId()
         val userRef = db.collection("users").document(uid)
         return try {
-            userRef.set(
-                mapOf(
-                    "lastSeenPrivacy" to lastSeenPrivacy,
-                    "photoPrivacy" to photoPrivacy,
-                    "statusPrivacy" to statusPrivacy,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                ),
-                SetOptions.merge()
-            ).await()
+            withTimeout(8_000L) {
+                userRef.set(
+                    mapOf(
+                        "lastSeenPrivacy" to lastSeenPrivacy,
+                        "photoPrivacy" to photoPrivacy,
+                        "statusPrivacy" to statusPrivacy,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                ).await()
+            }
             Result.success(Unit)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.UPDATE, userRef.path)
+            Result.failure(IllegalStateException("Request timed out while updating privacy.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

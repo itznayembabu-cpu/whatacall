@@ -360,7 +360,9 @@ fun UpdatesTabScreen(
                         IconButton(
                             onClick = {
                                 if (status.mediaUrl.isNotBlank()) {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(status.mediaUrl)))
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(status.mediaUrl)))
+                                    }
                                 }
                             },
                             modifier = Modifier.size(72.dp)

@@ -17,12 +17,14 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
 class ChatRepository(
@@ -119,29 +121,34 @@ class ChatRepository(
         val chatId = "direct_${sorted[0]}_${sorted[1]}"
         val chatRef = db.collection("chats").document(chatId)
         return try {
-            val snap = chatRef.get().await()
-            if (!snap.exists()) {
-                val payload = mapOf(
-                    "type" to "direct",
-                    "title" to "",
-                    "groupPhotoUrl" to "",
-                    "participantIds" to sorted,
-                    "adminIds" to sorted,
-                    "lastMessageText" to "",
-                    "lastMessageType" to "text",
-                    "lastMessageSenderId" to "",
-                    "pinnedBy" to emptyList<String>(),
-                    "archivedBy" to emptyList<String>(),
-                    "mutedBy" to emptyList<String>(),
-                    "typingUserIds" to emptyList<String>(),
-                    "unreadCounts" to mapOf(uid to 0L, peerUid to 0L),
-                    "createdBy" to uid,
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                chatRef.set(payload).await()
+            withTimeout(10_000L) {
+                val snap = chatRef.get().await()
+                if (!snap.exists()) {
+                    val payload = mapOf(
+                        "type" to "direct",
+                        "title" to "",
+                        "groupPhotoUrl" to "",
+                        "participantIds" to sorted,
+                        "adminIds" to sorted,
+                        "lastMessageText" to "",
+                        "lastMessageType" to "text",
+                        "lastMessageSenderId" to "",
+                        "pinnedBy" to emptyList<String>(),
+                        "archivedBy" to emptyList<String>(),
+                        "mutedBy" to emptyList<String>(),
+                        "typingUserIds" to emptyList<String>(),
+                        "unreadCounts" to mapOf(uid to 0L, peerUid to 0L),
+                        "createdBy" to uid,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                    chatRef.set(payload).await()
+                }
             }
             Result.success(chatId)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.CREATE, chatRef.path)
+            Result.failure(IllegalStateException("Timed out opening chat. Check your connection.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -176,8 +183,13 @@ class ChatRepository(
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
-            chatRef.set(payload).await()
+            withTimeout(10_000L) {
+                chatRef.set(payload).await()
+            }
             Result.success(chatId)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.CREATE, chatRef.path)
+            Result.failure(IllegalStateException("Timed out creating group chat. Check your connection.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -265,21 +277,26 @@ class ChatRepository(
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
-            msgRef.set(msgPayload).await()
+            withTimeout(10_000L) {
+                msgRef.set(msgPayload).await()
 
-            chatRef.set(
-                mapOf(
-                    "lastMessageText" to previewText,
-                    "lastMessageType" to type,
-                    "lastMessageSenderId" to uid,
-                    "lastMessageAt" to FieldValue.serverTimestamp(),
-                    "unreadCounts" to updatedUnread,
-                    "updatedAt" to FieldValue.serverTimestamp()
-                ),
-                SetOptions.merge()
-            ).await()
+                chatRef.set(
+                    mapOf(
+                        "lastMessageText" to previewText,
+                        "lastMessageType" to type,
+                        "lastMessageSenderId" to uid,
+                        "lastMessageAt" to FieldValue.serverTimestamp(),
+                        "unreadCounts" to updatedUnread,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ),
+                    SetOptions.merge()
+                ).await()
+            }
 
             Result.success(messageId)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.CREATE, msgRef.path)
+            Result.failure(IllegalStateException("Timed out sending message. Check your connection.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

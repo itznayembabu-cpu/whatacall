@@ -40,6 +40,7 @@ object E2eeCryptoManager {
         val privateKeyBase64: String
     )
 
+    @Synchronized
     fun getOrCreateIdentityKeyPair(context: Context, uid: String): KeyPairEncoded {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val privKeyName = "${KEY_PRIVATE}_$uid"
@@ -47,28 +48,46 @@ object E2eeCryptoManager {
         val existingPriv = prefs.getString(privKeyName, null)
         val existingPub = prefs.getString(pubKeyName, null)
         if (!existingPriv.isNullOrBlank() && !existingPub.isNullOrBlank()) {
-            return KeyPairEncoded(existingPub, existingPriv)
+            val validStored = runCatching {
+                val privBytes = Base64.decode(existingPriv, Base64.NO_WRAP)
+                val pubBytes = Base64.decode(existingPub, Base64.NO_WRAP)
+                privBytes.isNotEmpty() && pubBytes.isNotEmpty()
+            }.getOrDefault(false)
+            if (validStored) {
+                return KeyPairEncoded(existingPub, existingPriv)
+            }
         }
-        val kpg = KeyPairGenerator.getInstance("EC")
-        kpg.initialize(ECGenParameterSpec("secp256r1"), secureRandom)
-        val kp = kpg.generateKeyPair()
-        val pubB64 = Base64.encodeToString(kp.public.encoded, Base64.NO_WRAP)
-        val privB64 = Base64.encodeToString(kp.private.encoded, Base64.NO_WRAP)
+        val encoded = generateEcP256KeyPair()
         prefs.edit()
-            .putString(pubKeyName, pubB64)
-            .putString(privKeyName, privB64)
+            .putString(pubKeyName, encoded.publicKeyBase64)
+            .putString(privKeyName, encoded.privateKeyBase64)
             .apply()
-        return KeyPairEncoded(pubB64, privB64)
+        return encoded
     }
 
-    fun generateEphemeralKeyPair(): KeyPairEncoded {
+    fun generateEphemeralKeyPair(): KeyPairEncoded = generateEcP256KeyPair()
+
+    private fun generateEcP256KeyPair(): KeyPairEncoded {
         val kpg = KeyPairGenerator.getInstance("EC")
-        kpg.initialize(ECGenParameterSpec("secp256r1"), secureRandom)
-        val kp = kpg.generateKeyPair()
-        return KeyPairEncoded(
-            publicKeyBase64 = Base64.encodeToString(kp.public.encoded, Base64.NO_WRAP),
-            privateKeyBase64 = Base64.encodeToString(kp.private.encoded, Base64.NO_WRAP)
+        val initAttempts = listOf<() -> Unit>(
+            { kpg.initialize(ECGenParameterSpec("secp256r1"), secureRandom) },
+            { kpg.initialize(ECGenParameterSpec("prime256v1"), secureRandom) },
+            { kpg.initialize(256, secureRandom) }
         )
+        var lastError: Throwable? = null
+        for (attempt in initAttempts) {
+            try {
+                attempt()
+                val kp = kpg.generateKeyPair()
+                return KeyPairEncoded(
+                    publicKeyBase64 = Base64.encodeToString(kp.public.encoded, Base64.NO_WRAP),
+                    privateKeyBase64 = Base64.encodeToString(kp.private.encoded, Base64.NO_WRAP)
+                )
+            } catch (t: Throwable) {
+                lastError = t
+            }
+        }
+        throw IllegalStateException("Device EC P-256 key generation failed: ${lastError?.localizedMessage ?: "unknown error"}", lastError)
     }
 
     fun deriveSharedAesKey(

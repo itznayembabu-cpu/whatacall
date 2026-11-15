@@ -16,12 +16,14 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import java.util.UUID
 
 class CallRepository(
@@ -136,8 +138,13 @@ class CallRepository(
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
-            callRef.set(payload).await()
+            withTimeout(10_000L) {
+                callRef.set(payload).await()
+            }
             Result.success(callId)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.CREATE, callRef.path)
+            Result.failure(IllegalStateException("Timed out starting call. Check your connection.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -1,5 +1,6 @@
 package com.example.webrtc
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,10 +8,13 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
 
@@ -33,20 +37,33 @@ class CallForegroundService : Service() {
         val callId = intent?.getStringExtra(EXTRA_CALL_ID) ?: ""
 
         val notification = buildNotification(peerName, callType, callId)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val type = if (callType == "video") {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val hasMic = ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.RECORD_AUDIO
+                ) == PackageManager.PERMISSION_GRANTED
+                val hasCam = ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.CAMERA
+                ) == PackageManager.PERMISSION_GRANTED
+
+                var type = 0
+                if (hasMic) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                if (callType == "video" && hasCam) type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+
+                if (type != 0) {
+                    startForeground(NOTIFICATION_ID, notification, type)
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
             } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                startForeground(NOTIFICATION_ID, notification)
             }
-            startForeground(NOTIFICATION_ID, notification, type)
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        } catch (e: SecurityException) {
+            Log.w("CallForegroundService", "Unable to elevate call foreground service: ${e.message}")
+            stopSelf()
+            return START_NOT_STICKY
         }
         return START_STICKY
     }

@@ -33,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.example.ui.components.EncryptionNoticeChip
 import com.example.ui.viewmodel.WhatacallMainViewModel
@@ -63,6 +65,12 @@ fun ProfileSetupScreen(
     var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var isSaving by remember { mutableStateOf(false) }
     var errorText by remember { mutableStateOf<String?>(null) }
+    val deviceKeyReady by mainViewModel.deviceKeyReady.collectAsStateWithLifecycle()
+    val profileSetupStep by mainViewModel.profileSetupStep.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        mainViewModel.prewarmE2eeKey(context)
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -161,7 +169,10 @@ fun ProfileSetupScreen(
                     .testTag("profile_username_input")
             )
 
-            EncryptionNoticeChip("Generates ECDH P-256 E2EE identity key on device")
+            EncryptionNoticeChip(
+                if (deviceKeyReady) "ECDH P-256 E2EE identity key ready on device"
+                else "Generates ECDH P-256 E2EE identity key on device"
+            )
 
             if (errorText != null) {
                 Surface(
@@ -219,7 +230,7 @@ fun ProfileSetupScreen(
 
             if (isSaving) {
                 Text(
-                    text = "Creating your Whatacall profile & E2EE key...",
+                    text = profileSetupStep ?: "Creating your Whatacall profile & E2EE key...",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

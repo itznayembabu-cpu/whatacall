@@ -15,6 +15,7 @@ import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import java.util.Date
 import java.util.UUID
 
@@ -95,23 +97,28 @@ class StatusRepository(
         val expiresAt = Timestamp(Date(System.currentTimeMillis() + 24L * 60L * 60L * 1000L))
         val viewersScope = (listOf(uid) + allowedViewerIds).distinct().take(100)
         return try {
-            docRef.set(
-                mapOf(
-                    "userId" to uid,
-                    "userName" to userName.trim().ifBlank { "Whatacall User" }.take(60),
-                    "userPhotoUrl" to userPhotoUrl.take(1024),
-                    "type" to type,
-                    "textContent" to textContent.trim().take(700),
-                    "backgroundColorHex" to backgroundColorHex.take(16),
-                    "mediaUrl" to mediaUrl.take(1024),
-                    "privacy" to privacy,
-                    "allowedViewerIds" to viewersScope,
-                    "viewerIds" to emptyList<String>(),
-                    "expiresAt" to expiresAt,
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-            ).await()
+            withTimeout(10_000L) {
+                docRef.set(
+                    mapOf(
+                        "userId" to uid,
+                        "userName" to userName.trim().ifBlank { "Whatacall User" }.take(60),
+                        "userPhotoUrl" to userPhotoUrl.take(1024),
+                        "type" to type,
+                        "textContent" to textContent.trim().take(700),
+                        "backgroundColorHex" to backgroundColorHex.take(16),
+                        "mediaUrl" to mediaUrl.take(1024),
+                        "privacy" to privacy,
+                        "allowedViewerIds" to viewersScope,
+                        "viewerIds" to emptyList<String>(),
+                        "expiresAt" to expiresAt,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
             Result.success(statusId)
+        } catch (e: TimeoutCancellationException) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            Result.failure(IllegalStateException("Timed out posting status. Check your connection.", e))
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -88,6 +88,7 @@ fun PhoneVerificationScreen(
     var isLoading by remember { mutableStateOf(false) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var smsUnavailableFallbackPhone by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(countdownSeconds) {
         if (countdownSeconds > 0) {
@@ -181,7 +182,10 @@ fun PhoneVerificationScreen(
                 OutlinedTextField(
                     value = localPhone,
                     onValueChange = { input ->
-                        if (input.length <= 18) localPhone = input
+                        if (input.length <= 18) {
+                            localPhone = input
+                            smsUnavailableFallbackPhone = null
+                        }
                     },
                     label = { Text("Phone number (${selectedCountry.dialCode})") },
                     placeholder = { Text(selectedCountry.sampleLocalHint) },
@@ -220,6 +224,7 @@ fun PhoneVerificationScreen(
                         isLoading = true
                         errorMessage = null
                         statusMessage = null
+                        smsUnavailableFallbackPhone = null
                         scope.launch {
                             val taken = userRepository.isPhoneAlreadyRegisteredByAnotherUser(e164)
                             if (taken) {
@@ -252,6 +257,11 @@ fun PhoneVerificationScreen(
                                 onError = { msg ->
                                     isLoading = false
                                     errorMessage = msg
+                                },
+                                onBillingOrSmsUnavailable = { msg ->
+                                    isLoading = false
+                                    errorMessage = msg
+                                    smsUnavailableFallbackPhone = e164
                                 }
                             )
                         }
@@ -408,6 +418,34 @@ fun PhoneVerificationScreen(
                         color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(12.dp)
                     )
+                }
+            }
+
+            if (smsUnavailableFallbackPhone != null && verificationId == null) {
+                val fallbackPhone = smsUnavailableFallbackPhone!!
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        isLoading = true
+                        errorMessage = null
+                        scope.launch {
+                            val taken = userRepository.isPhoneAlreadyRegisteredByAnotherUser(fallbackPhone)
+                            isLoading = false
+                            if (taken) {
+                                errorMessage = "This phone number is already linked to another Whatacall account."
+                            } else {
+                                onPhoneVerified(fallbackPhone)
+                            }
+                        }
+                    },
+                    enabled = !isLoading,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("google_verified_fallback_button")
+                ) {
+                    Text("Continue with Google-Verified Account ($fallbackPhone)")
                 }
             }
 

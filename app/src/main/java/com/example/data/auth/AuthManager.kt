@@ -139,7 +139,8 @@ object AuthManager {
         forceResendingToken: PhoneAuthProvider.ForceResendingToken? = null,
         onCodeSent: (verificationId: String, token: PhoneAuthProvider.ForceResendingToken) -> Unit,
         onAutoVerified: (PhoneAuthCredential) -> Unit,
-        onError: (String) -> Unit
+        onError: (String) -> Unit,
+        onBillingOrSmsUnavailable: ((String) -> Unit)? = null
     ) {
         try {
             SmsRetriever.getClient(activity).startSmsRetriever()
@@ -155,14 +156,36 @@ object AuthManager {
             override fun onVerificationFailed(e: FirebaseException) {
                 Log.e(TAG, "Phone OTP verification failed", e)
                 val errorCode = (e as? FirebaseAuthException)?.errorCode
+                val rawMsg = generateSequence(e as Throwable) { it.cause }
+                    .mapNotNull { it.message }
+                    .joinToString(" | ")
+                val isBillingOrSmsDisabled =
+                    rawMsg.contains("BILLING_NOT_ENABLED", ignoreCase = true) ||
+                        rawMsg.contains("QUOTA_EXCEEDED", ignoreCase = true) ||
+                        errorCode == "ERROR_OPERATION_NOT_ALLOWED" ||
+                        rawMsg.contains("not enabled", ignoreCase = true)
+
+                if (isBillingOrSmsDisabled) {
+                    val friendlyBillingMsg =
+                        "Firebase SMS OTP is blocked on the free Spark plan (BILLING_NOT_ENABLED). " +
+                            "Enable the Blaze plan or add test numbers in Firebase Console for SMS OTP, " +
+                            "or tap \"Continue with Google-Verified Account\" below."
+                    if (onBillingOrSmsUnavailable != null) {
+                        onBillingOrSmsUnavailable(friendlyBillingMsg)
+                    } else {
+                        onError(friendlyBillingMsg)
+                    }
+                    return
+                }
+
                 val friendly = when {
-                    errorCode == "ERROR_OPERATION_NOT_ALLOWED" ||
-                        e.message?.contains("not enabled", ignoreCase = true) == true ->
-                        "Firebase Phone Authentication is not enabled in the Firebase Console yet. Enable Authentication > Sign-in method > Phone, or add a test phone number in Console."
-                    e.message?.contains("TOO_MANY_REQUESTS", ignoreCase = true) == true ->
+                    rawMsg.contains("TOO_MANY_REQUESTS", ignoreCase = true) ->
                         "Too many OTP attempts. Please wait before requesting another verification code."
-                    e.message?.contains("INVALID_PHONE_NUMBER", ignoreCase = true) == true ->
+                    rawMsg.contains("INVALID_PHONE_NUMBER", ignoreCase = true) ->
                         "Please enter a valid mobile phone number with country code."
+                    rawMsg.contains("APP_NOT_AUTHORIZED", ignoreCase = true) ||
+                        rawMsg.contains("INVALID_APP_CREDENTIAL", ignoreCase = true) ->
+                        "App SHA-1/Play Integrity verification mismatch in Firebase Console."
                     else -> e.localizedMessage ?: "Failed to send OTP via Firebase Phone Auth."
                 }
                 onError(friendly)
