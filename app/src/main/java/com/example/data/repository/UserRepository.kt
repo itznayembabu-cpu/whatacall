@@ -10,17 +10,18 @@ import com.example.core.model.UserPrivateInfo
 import com.example.core.model.UserProfile
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
-import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.emitAll
@@ -212,12 +213,13 @@ class UserRepository(
             }
 
             onStage("2/3 Checking phone & @username availability...")
-            val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(8_000L) {
+            withTimeoutOrNull(1_200L) { db.enableNetwork().await() }
+            val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(10_000L) {
                 coroutineScope {
-                    val phoneDeferred = async { phoneDirRef.get(Source.SERVER).await() }
-                    val usernameDeferred = async { usernameRef?.get(Source.SERVER)?.await() }
-                    val profileDeferred = async { userRef.get(Source.SERVER).await() }
-                    val privateDeferred = async { privateRef.get(Source.SERVER).await() }
+                    val phoneDeferred = async { fetchResilient(phoneDirRef) }
+                    val usernameDeferred = async { usernameRef?.let { fetchResilient(it) } }
+                    val profileDeferred = async { fetchResilient(userRef) }
+                    val privateDeferred = async { fetchResilient(privateRef) }
                     Quadruple(
                         phoneDeferred.await(),
                         usernameDeferred.await(),
@@ -364,15 +366,31 @@ class UserRepository(
             throw e
         } catch (e: FirebaseFirestoreException) {
             handleFirestoreError(e, OperationType.WRITE, "users")
-            Result.failure(
-                IllegalStateException(
-                    "Database error (${e.code.name}): ${e.localizedMessage ?: "Unable to save profile."}",
-                    e
-                )
-            )
+            val hint = if (e.code == FirebaseFirestoreException.Code.UNAVAILABLE) {
+                "Cloud database unreachable (UNAVAILABLE). Check internet connection or disable any VPN/Private DNS and tap Start again."
+            } else {
+                "Database error (${e.code.name}): ${e.localizedMessage ?: "Unable to save profile."}"
+            }
+            Result.failure(IllegalStateException(hint, e))
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, "users")
             Result.failure(e)
+        }
+    }
+
+    private suspend fun fetchResilient(docRef: DocumentReference): DocumentSnapshot {
+        return try {
+            docRef.get().await()
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code == FirebaseFirestoreException.Code.UNAVAILABLE ||
+                e.code == FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
+            ) {
+                withTimeoutOrNull(1_500L) { db.enableNetwork().await() }
+                delay(500L)
+                docRef.get().await()
+            } else {
+                throw e
+            }
         }
     }
 
