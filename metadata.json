@@ -1,0 +1,6 @@
+{
+  "name": "Whatacall",
+  "description": "Whatacall: Real-time Android messaging, voice, and video calling application powered by Firebase and WebRTC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
