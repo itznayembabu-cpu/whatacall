@@ -193,7 +193,7 @@ object AuthManager {
                 ?: return Result.failure(IllegalStateException("Sign in with Google first before linking phone number."))
             try {
                 user.updatePhoneNumber(credential).await()
-                withTimeoutOrNull(4_000L) {
+                withTimeoutOrNull(2_500L) {
                     user.getIdToken(true).await()
                 }
             } catch (e: FirebaseAuthException) {

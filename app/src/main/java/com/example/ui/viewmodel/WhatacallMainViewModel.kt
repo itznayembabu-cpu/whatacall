@@ -157,22 +157,12 @@ class WhatacallMainViewModel(
             var errorMessage: String? = null
             try {
                 val res = withContext(Dispatchers.IO) {
-                    var photoUrl = ""
-                    if (photoUri != null) {
-                        val ext = storageRepository.inferExtension(context, photoUri, "jpg")
-                        val upload = storageRepository.uploadMedia(currentUserId, "avatars", photoUri, ext)
-                        if (upload.isSuccess) {
-                            photoUrl = upload.getOrThrow()
-                        } else {
-                            _actionMessage.value = upload.exceptionOrNull()?.message
-                        }
-                    }
                     val keyPair = E2eeCryptoManager.getOrCreateIdentityKeyPair(context, currentUserId)
                     userRepository.registerOrUpdatePhoneAndProfile(
                         displayName = displayName,
                         about = about,
                         username = username,
-                        photoUrl = photoUrl,
+                        photoUrl = "",
                         verifiedE164Phone = verifiedPhone,
                         publicKeyBase64 = keyPair.publicKeyBase64,
                         email = email
@@ -180,6 +170,29 @@ class WhatacallMainViewModel(
                 }
                 success = res.isSuccess
                 errorMessage = res.exceptionOrNull()?.localizedMessage ?: res.exceptionOrNull()?.message
+
+                if (success && photoUri != null) {
+                    val appContext = context.applicationContext
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val ext = storageRepository.inferExtension(appContext, photoUri, "jpg")
+                        val upload = storageRepository.uploadMedia(
+                            uid = currentUserId,
+                            folder = "avatars",
+                            uri = photoUri,
+                            extension = ext,
+                            timeoutMs = 5_000L
+                        )
+                        if (upload.isSuccess) {
+                            userRepository.updateProfileFields(
+                                displayName = displayName,
+                                about = about,
+                                photoUrl = upload.getOrThrow()
+                            )
+                        } else {
+                            Log.w("WhatacallMainVM", "Optional avatar upload skipped: ${upload.exceptionOrNull()?.message}")
+                        }
+                    }
+                }
             } catch (e: TimeoutCancellationException) {
                 errorMessage = "Request timed out. Please check your internet connection and try again."
             } catch (e: CancellationException) {

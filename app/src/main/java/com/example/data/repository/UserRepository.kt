@@ -15,6 +15,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -203,16 +204,12 @@ class UserRepository(
                 null
             }
 
-            withTimeoutOrNull(4_000L) {
-                auth.currentUser?.getIdToken(false)?.await()
-            }
-
-            val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(12_000L) {
+            val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(8_000L) {
                 coroutineScope {
-                    val phoneDeferred = async { phoneDirRef.get().await() }
-                    val usernameDeferred = async { usernameRef?.get()?.await() }
-                    val profileDeferred = async { userRef.get().await() }
-                    val privateDeferred = async { privateRef.get().await() }
+                    val phoneDeferred = async { phoneDirRef.get(Source.SERVER).await() }
+                    val usernameDeferred = async { usernameRef?.get(Source.SERVER)?.await() }
+                    val profileDeferred = async { userRef.get(Source.SERVER).await() }
+                    val privateDeferred = async { privateRef.get(Source.SERVER).await() }
                     Quadruple(
                         phoneDeferred.await(),
                         usernameDeferred.await(),
@@ -341,7 +338,7 @@ class UserRepository(
                 )
             }
 
-            withTimeout(15_000L) {
+            withTimeout(10_000L) {
                 batch.commit().await()
             }
 

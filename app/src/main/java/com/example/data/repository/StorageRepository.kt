@@ -14,21 +14,22 @@ class StorageRepository(
     private val storage: FirebaseStorage = FirebaseStorage.getInstance()
 ) {
     init {
-        storage.maxUploadRetryTimeMillis = 10_000L
-        storage.maxOperationRetryTimeMillis = 10_000L
+        storage.maxUploadRetryTimeMillis = 4_000L
+        storage.maxOperationRetryTimeMillis = 4_000L
     }
 
     suspend fun uploadMedia(
         uid: String,
         folder: String,
         uri: Uri,
-        extension: String = "bin"
+        extension: String = "bin",
+        timeoutMs: Long = 10_000L
     ): Result<String> {
         return try {
             val cleanExt = extension.ifBlank { "bin" }.take(10)
             val fileName = "${UUID.randomUUID()}.$cleanExt"
             val ref = storage.reference.child("users/$uid/$folder/$fileName")
-            val url = withTimeout(15_000L) {
+            val url = withTimeout(timeoutMs) {
                 ref.putFile(uri).await()
                 ref.downloadUrl.await().toString()
             }
