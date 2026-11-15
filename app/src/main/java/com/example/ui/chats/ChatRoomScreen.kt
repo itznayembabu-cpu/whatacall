@@ -98,7 +98,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
-import com.example.core.crypto.E2eeCryptoManager
 import com.example.core.model.Chat
 import com.example.core.model.ChatMessage
 import com.example.core.model.UiState
@@ -434,11 +433,7 @@ fun ChatRoomScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     EncryptionNoticeChip(
-                                        if (chat?.type == "direct" && !peerProfile?.publicKeyBase64.isNullOrBlank()) {
-                                            "Messages are E2EE with ECDH P-256 + AES-256-GCM"
-                                        } else {
-                                            "Protected by Whatacall TLS & Firestore Security Rules"
-                                        }
+                                        "Protected by Whatacall TLS & Firestore Security Rules"
                                     )
                                 }
                             }
@@ -870,29 +865,27 @@ fun ChatRoomScreen(
         )
     }
 
-    // E2EE Security Fingerprint Dialog
+    // Transport & Call Security Dialog
     if (showE2eeDialog) {
-        val peerKey = peerProfile?.publicKeyBase64 ?: ""
-        val fingerprint = if (peerKey.isNotBlank()) {
-            E2eeCryptoManager.sha256Hex(peerKey).take(32).chunked(4).joinToString(" ")
-        } else {
-            "Peer has not published an ECDH identity key yet."
-        }
         AlertDialog(
             onDismissRequest = { showE2eeDialog = false },
-            title = { Text("Encryption Security") },
+            title = { Text("Chat & Call Security") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Direct 1-on-1 text messages use ECDH (P-256) key agreement + HKDF-SHA256 + AES-256-GCM authenticated encryption. Voice and video calls use WebRTC DTLS-SRTP.",
+                        text = "Messages are transmitted over TLS and protected by strict Firestore participant-only access rules. Voice and video calls use encrypted WebRTC DTLS-SRTP media streams.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Text(
-                        text = "Peer Key Fingerprint:",
+                        text = "Account Verification:",
                         style = MaterialTheme.typography.labelLarge
                     )
                     Text(
-                        text = fingerprint,
+                        text = if (peerProfile?.isPhoneVerified == true) {
+                            "Verified Whatacall phone identity"
+                        } else {
+                            "Active Whatacall account"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary
                     )

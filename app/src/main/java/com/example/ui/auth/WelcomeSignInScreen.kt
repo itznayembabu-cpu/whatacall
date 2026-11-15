@@ -127,8 +127,8 @@ fun WelcomeSignInScreen(
                         )
                         FeatureRow(
                             icon = Icons.Rounded.Lock,
-                            title = "End-to-End Encrypted",
-                            subtitle = "ECDH P-256 + AES-256-GCM encrypted direct messages & DTLS-SRTP calls."
+                            title = "Private & Encrypted",
+                            subtitle = "TLS-secured messages, strict account access rules & DTLS-SRTP calls."
                         )
                     }
                 }

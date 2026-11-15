@@ -3,6 +3,7 @@ package com.example.core.model
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 
 sealed interface UiState<out T> {
@@ -22,11 +23,17 @@ data class UserProfile(
     val phoneHash: String = "",
     val phoneMasked: String = "",
     val publicKeyBase64: String = "",
+    @get:PropertyName("isPhoneVerified")
+    @field:PropertyName("isPhoneVerified")
     val isPhoneVerified: Boolean = false,
+    @get:PropertyName("isOnline")
+    @field:PropertyName("isOnline")
     val isOnline: Boolean = false,
     val lastSeenPrivacy: String = "everyone",
     val photoPrivacy: String = "everyone",
     val statusPrivacy: String = "everyone",
+    @get:PropertyName("isSuspended")
+    @field:PropertyName("isSuspended")
     val isSuspended: Boolean = false,
     @ServerTimestamp val lastSeenAt: Timestamp? = null,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -98,7 +105,11 @@ data class ChatMessage(
     val replyToMessageId: String = "",
     val replyToPreview: String = "",
     val replyToSenderName: String = "",
+    @get:PropertyName("isForwarded")
+    @field:PropertyName("isForwarded")
     val isForwarded: Boolean = false,
+    @get:PropertyName("isDeleted")
+    @field:PropertyName("isDeleted")
     val isDeleted: Boolean = false,
     val deletedForUserIds: List<String> = emptyList(),
     val deliveredTo: List<String> = emptyList(),

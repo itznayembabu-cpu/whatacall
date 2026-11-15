@@ -5,7 +5,6 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.core.crypto.E2eeCryptoManager
 import com.example.core.firebase.unwrapFirestoreMessage
 import com.example.core.model.CallSession
 import com.example.core.model.Chat
@@ -103,9 +102,6 @@ class WhatacallMainViewModel(
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
-    private val _deviceKeyReady = MutableStateFlow(false)
-    val deviceKeyReady: StateFlow<Boolean> = _deviceKeyReady.asStateFlow()
-
     private val _profileSetupStep = MutableStateFlow<String?>(null)
     val profileSetupStep: StateFlow<String?> = _profileSetupStep.asStateFlow()
 
@@ -149,24 +145,6 @@ class WhatacallMainViewModel(
         }
     }
 
-    fun prewarmE2eeKey(context: Context) {
-        if (_deviceKeyReady.value) return
-        val appContext = context.applicationContext
-        viewModelScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    withTimeout(3_000L) {
-                        E2eeCryptoManager.getOrCreateIdentityKeyPair(appContext, currentUserId)
-                    }
-                }
-            }.onSuccess {
-                _deviceKeyReady.value = true
-            }.onFailure { e ->
-                Log.e("WhatacallMainVM", "Failed to prewarm E2EE identity key", e)
-            }
-        }
-    }
-
     fun completeProfileSetup(
         context: Context,
         displayName: String,
@@ -182,13 +160,7 @@ class WhatacallMainViewModel(
             var success = false
             var errorMessage: String? = null
             try {
-                _profileSetupStep.value = "1/3 Generating ECDH P-256 E2EE key on device..."
-                val keyPair = withContext(Dispatchers.IO) {
-                    withTimeout(3_000L) {
-                        E2eeCryptoManager.getOrCreateIdentityKeyPair(appContext, currentUserId)
-                    }
-                }
-                _deviceKeyReady.value = true
+                _profileSetupStep.value = "1/2 Checking phone & @username availability..."
 
                 val res = withContext(Dispatchers.IO) {
                     userRepository.registerOrUpdatePhoneAndProfile(
@@ -197,7 +169,7 @@ class WhatacallMainViewModel(
                         username = username,
                         photoUrl = "",
                         verifiedE164Phone = verifiedPhone,
-                        publicKeyBase64 = keyPair.publicKeyBase64,
+                        publicKeyBase64 = "",
                         email = email,
                         onStage = { step -> _profileSetupStep.value = step }
                     )

@@ -73,7 +73,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import com.example.core.crypto.E2eeCryptoManager
 import com.example.core.model.CallSession
 import com.example.core.model.UiState
 import com.example.data.auth.AuthManager
@@ -385,7 +384,6 @@ private fun AuthenticatedWhatacallShell(
                         }
 
                         is AppOverlayRoute.ChatRoom -> {
-                            val keyPair = remember(uid) { E2eeCryptoManager.getOrCreateIdentityKeyPair(context, uid) }
                             val chatVm: ChatRoomViewModel = viewModel(
                                 key = "chat_${currentOverlay.chatId}",
                                 factory = viewModelFactory {
@@ -394,7 +392,7 @@ private fun AuthenticatedWhatacallShell(
                                         ChatRoomViewModel(
                                             chatId = currentOverlay.chatId,
                                             currentUserId = uid,
-                                            myPrivateKeyBase64 = keyPair.privateKeyBase64,
+                                            myPrivateKeyBase64 = "",
                                             chatRepository = ChatRepository(db),
                                             userRepository = UserRepository(db),
                                             storageRepository = StorageRepository()

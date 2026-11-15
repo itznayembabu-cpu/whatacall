@@ -241,7 +241,7 @@ fun AdminDashboardScreen(
                                 Text("• Firestore Enterprise Database: Connected", style = MaterialTheme.typography.bodyMedium)
                                 Text("• Phone Verified Users: ${users.count { it.isPhoneVerified }} / ${users.size}", style = MaterialTheme.typography.bodyMedium)
                                 Text("• WebRTC STUN Signaling: Active", style = MaterialTheme.typography.bodyMedium)
-                                Text("• End-to-End Message Encryption: ECDH P-256 + AES-256-GCM", style = MaterialTheme.typography.bodyMedium)
+                                Text("• Messaging & Call Security: TLS + Firestore Rules + DTLS-SRTP", style = MaterialTheme.typography.bodyMedium)
                             }
                         }
                     }

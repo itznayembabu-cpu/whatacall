@@ -16,6 +16,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.firestore.WriteBatch
 import com.google.firebase.firestore.snapshots
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -212,7 +213,7 @@ class UserRepository(
                 null
             }
 
-            onStage("2/3 Checking phone & @username availability...")
+            onStage("1/2 Checking phone & @username availability...")
             withTimeoutOrNull(1_200L) { db.enableNetwork().await() }
             val (existingPhone, existingUsername, existingProfileSnap, existingPrivate) = withTimeout(10_000L) {
                 coroutineScope {
@@ -348,9 +349,9 @@ class UserRepository(
                 )
             }
 
-            onStage("3/3 Saving profile to Whatacall database...")
-            withTimeout(10_000L) {
-                batch.commit().await()
+            onStage("2/2 Saving profile to Whatacall database...")
+            withTimeout(15_000L) {
+                commitBatchResilient(batch)
             }
 
             Result.success(Unit)
@@ -375,6 +376,22 @@ class UserRepository(
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, "users")
             Result.failure(e)
+        }
+    }
+
+    private suspend fun commitBatchResilient(batch: WriteBatch) {
+        try {
+            batch.commit().await()
+        } catch (e: FirebaseFirestoreException) {
+            if (e.code == FirebaseFirestoreException.Code.UNAVAILABLE ||
+                e.code == FirebaseFirestoreException.Code.DEADLINE_EXCEEDED
+            ) {
+                withTimeoutOrNull(1_500L) { db.enableNetwork().await() }
+                delay(500L)
+                batch.commit().await()
+            } else {
+                throw e
+            }
         }
     }
 

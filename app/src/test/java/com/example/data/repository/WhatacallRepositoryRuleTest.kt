@@ -29,7 +29,7 @@ class WhatacallRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 username = "alice_${UUID.randomUUID().toString().take(6)}",
                 photoUrl = "",
                 verifiedE164Phone = uniquePhone,
-                publicKeyBase64 = aliceKeys.publicKeyBase64,
+                publicKeyBase64 = "",
                 email = "alice@whatacall.test"
             )
         }
@@ -38,6 +38,14 @@ class WhatacallRepositoryRuleTest : FirestoreEmulatorTestBase() {
         val fetched = withTimeout(TIMEOUT_MS) { userRepo.getUserProfile(aliceUid) }
         assertNotNull(fetched)
         assertEquals("Alice Rahman", fetched?.displayName)
+        assertTrue("isPhoneVerified must deserialize as true", fetched!!.isPhoneVerified)
+        assertTrue("isOnline must deserialize as true", fetched.isOnline)
+        assertFalse("isSuspended must deserialize as false", fetched.isSuspended)
+
+        val observed = withTimeout(FLOW_TIMEOUT_MS) {
+            userRepo.observeUserProfile(aliceUid).first { it != null && it.isPhoneVerified }
+        }
+        assertNotNull(observed)
 
         // Bob tries to register the exact same phone number -> blocked!
         signInTestUser("bob_${UUID.randomUUID()}@whatacall.test")
